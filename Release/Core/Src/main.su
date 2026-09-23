@@ -1,0 +1,12 @@
+main.c:112:13:PS2_Delay_us	0	static,ignoring_inline_asm
+main.c:105:20:PS2_DATA_Low	0	static
+main.c:108:20:PS2_DATA_High	0	static
+main.c:99:20:PS2_CLK_Low	0	static
+main.c:102:20:PS2_CLK_High	0	static
+main.c:120:6:PS2_Write_Byte	24	static
+main.c:170:6:PS2_Send_Packet	16	static
+main.c:210:6:USBH_HID_EventCallback	8	static
+main.c:231:6:HAL_TIM_PeriodElapsedCallback	32	static
+main.c:286:6:SystemClock_Config	88	static,ignoring_inline_asm
+main.c:66:5:main	56	static,ignoring_inline_asm
+main.c:381:6:Error_Handler	0	static,ignoring_inline_asm
