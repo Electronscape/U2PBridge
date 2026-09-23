@@ -44,7 +44,8 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
 ## Pinout Configuration
 
-![U2PBridge Pinout Diagram](images/pinout.jpg)
+<img width="1561" height="1178" alt="pinouts" src="https://github.com/user-attachments/assets/d8f707be-e465-4876-aa5b-666317ecbefc" />
+
 
 Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
