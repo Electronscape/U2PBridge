@@ -74,7 +74,11 @@ Ready-to-flash binary releases are available in the [Releases Tab](../../release
 
 ---
 
-Linux command:
+### Flashing on Linux via CLI
+
+If you're on Linux, you can flash directly using `dfu-util` without needing a GUI tool:
+
+```bash
 sudo dfu-util -a 0 -d 0483:df11 -s 0x08000000:leave -D USB2PS2Bridge1.bin
 
 
