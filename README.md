@@ -74,6 +74,10 @@ Ready-to-flash binary releases are available in the [Releases Tab](../../release
 
 ---
 
+Linux command:
+sudo dfu-util -a 0 -d 0483:df11 -s 0x08000000:leave -D USB2PS2Bridge1.bin
+
+
 ## License
 
 Distributed under the MIT License.
