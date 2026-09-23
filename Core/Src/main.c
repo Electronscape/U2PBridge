@@ -62,7 +62,7 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 
 /* ============================================================================
  * Main Entry Point
- 
+
  * ============================================================================ */
 int main(void) {
     HAL_Init();
@@ -116,18 +116,27 @@ static void PS2_Delay_us(uint32_t us) {
         __NOP();
     }
 }
+// 84 MHz CPU clock: ~42 NOPs gives ~500 ns delay for 1 MHz clocking
+#define DELAY_500NS() do { \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); \
+} while(0)
 
-// Transmit a single byte using standard PS/2 frame timing (~10kHz - 16kHz clock)
+// Transmit a single byte using high-speed 1 MHz PS/2 frame timing
 void PS2_Write_Byte(uint8_t data) {
     uint8_t parity = 1; // Odd parity calculation
 
     // 1. Start Bit (Low)
     PS2_DATA_Low();
-    PS2_Delay_us(20);
+    DELAY_500NS();
     PS2_CLK_Low();
-    PS2_Delay_us(40);
+    DELAY_500NS();
     PS2_CLK_High();
-    PS2_Delay_us(20);
+    DELAY_500NS();
 
     // 2. 8 Data Bits (LSB First)
     for (int i = 0; i < 8; i++) {
@@ -139,11 +148,11 @@ void PS2_Write_Byte(uint8_t data) {
         else
             PS2_DATA_Low();
 
-        PS2_Delay_us(20);
+        DELAY_500NS();
         PS2_CLK_Low();
-        PS2_Delay_us(40);
+        DELAY_500NS();
         PS2_CLK_High();
-        PS2_Delay_us(20);
+        DELAY_500NS();
     }
 
     // 3. Parity Bit (Odd)
@@ -152,21 +161,20 @@ void PS2_Write_Byte(uint8_t data) {
     else
         PS2_DATA_Low();
 
-    PS2_Delay_us(20);
+    DELAY_500NS();
     PS2_CLK_Low();
-    PS2_Delay_us(40);
+    DELAY_500NS();
     PS2_CLK_High();
-    PS2_Delay_us(20);
+    DELAY_500NS();
 
     // 4. Stop Bit (High)
     PS2_DATA_High();
-    PS2_Delay_us(20);
+    DELAY_500NS();
     PS2_CLK_Low();
-    PS2_Delay_us(40);
+    DELAY_500NS();
     PS2_CLK_High();
-    PS2_Delay_us(40);
+    DELAY_500NS();
 }
-
 // Convert USB deltas to standard 3-Byte PS/2 Mouse Packet
 void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
     // PS/2 Y-axis is inverted relative to USB HID
@@ -320,9 +328,9 @@ static void MX_TIM2_Init(void) {
     TIM_MasterConfigTypeDef sMasterConfig = { 0 };
 
     htim2.Instance = TIM2;
-    htim2.Init.Prescaler = 83;
+    htim2.Init.Prescaler = 1;
     htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim2.Init.Period = 999;
+    htim2.Init.Period = 60;	// 1000khz
     htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_Base_Init(&htim2) != HAL_OK) {
@@ -370,9 +378,9 @@ static void MX_GPIO_Init(void) {
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD; // Open-Drain is required for PS/2!
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Open-Drain is required for PS/2!
     GPIO_InitStruct.Pull = GPIO_PULLUP;          // Internal pull-up enable
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
