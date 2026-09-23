@@ -98,16 +98,19 @@ int main(void) {
  * ============================================================================ */
 // Low-level bit-bang helper (Open-drain: LOW = pull down, HIGH = release to pull-up)
 static inline void PS2_CLK_Low(void) {
-    HAL_GPIO_WritePin(PS2_CLK_PORT, PS2_CLK_PIN, GPIO_PIN_RESET);
+    PS2_CLK_PORT->BSRR = (uint32_t)PS2_CLK_PIN << 16;
 }
+
 static inline void PS2_CLK_High(void) {
-    HAL_GPIO_WritePin(PS2_CLK_PORT, PS2_CLK_PIN, GPIO_PIN_SET);
+    PS2_CLK_PORT->BSRR = PS2_CLK_PIN;
 }
+
 static inline void PS2_DATA_Low(void) {
-    HAL_GPIO_WritePin(PS2_DATA_PORT, PS2_DATA_PIN, GPIO_PIN_RESET);
+    PS2_DATA_PORT->BSRR = (uint32_t)PS2_DATA_PIN << 16;
 }
+
 static inline void PS2_DATA_High(void) {
-    HAL_GPIO_WritePin(PS2_DATA_PORT, PS2_DATA_PIN, GPIO_PIN_SET);
+    PS2_DATA_PORT->BSRR = PS2_DATA_PIN;
 }
 
 static void PS2_Delay_us(uint32_t us) {
@@ -124,11 +127,22 @@ static void PS2_Delay_us(uint32_t us) {
     __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
     __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
     __NOP(); __NOP(); \
+} while(0)// 84 MHz CPU clock: ~42 NOPs gives ~500 ns delay for 1 MHz clocking
+
+#define DELAY_400NS() do { \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
+    __NOP(); __NOP(); \
 } while(0)
 
 // Transmit a single byte using high-speed 1 MHz PS/2 frame timing
 void PS2_Write_Byte(uint8_t data) {
-    uint8_t parity = 1; // Odd parity calculation
+    uint8_t parity = 1;
+
+    // Guard against SysTick / IRQ jitter during frame transmission
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
     // 1. Start Bit (Low)
     PS2_DATA_Low();
@@ -138,28 +152,23 @@ void PS2_Write_Byte(uint8_t data) {
     PS2_CLK_High();
     DELAY_500NS();
 
-    // 2. 8 Data Bits (LSB First)
+    // 2. 8 Data Bits (LSB First) - Branchless DATA drive
     for (int i = 0; i < 8; i++) {
         uint8_t bit = (data >> i) & 1;
         parity ^= bit;
 
-        if (bit)
-            PS2_DATA_High();
-        else
-            PS2_DATA_Low();
+        // Constant-time bit write using BSRR register math (No IF statements)
+        PS2_DATA_PORT->BSRR = (uint32_t)PS2_DATA_PIN << ((!bit) * 16);
 
-        DELAY_500NS();
+        DELAY_400NS();
         PS2_CLK_Low();
         DELAY_500NS();
         PS2_CLK_High();
-        DELAY_500NS();
+        DELAY_400NS();
     }
 
-    // 3. Parity Bit (Odd)
-    if (parity)
-        PS2_DATA_High();
-    else
-        PS2_DATA_Low();
+    // 3. Parity Bit (Odd) - Branchless
+    PS2_DATA_PORT->BSRR = (uint32_t)PS2_DATA_PIN << ((!parity) * 16);
 
     DELAY_500NS();
     PS2_CLK_Low();
@@ -174,34 +183,29 @@ void PS2_Write_Byte(uint8_t data) {
     DELAY_500NS();
     PS2_CLK_High();
     DELAY_500NS();
+
+    // Restore interrupt state
+    __set_PRIMASK(primask);
 }
+
 // Convert USB deltas to standard 3-Byte PS/2 Mouse Packet
 void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
     // PS/2 Y-axis is inverted relative to USB HID
     dy = -dy;
 
     // Clamp values to standard int8_t limits (-127 to +127)
-    if (dx > 127)
-        dx = 127;
-    if (dx < -127)
-        dx = -127;
-    if (dy > 127)
-        dy = 127;
-    if (dy < -127)
-        dy = -127;
+    if (dx > 127)  dx = 127;
+    if (dx < -127) dx = -127;
+    if (dy > 127)  dy = 127;
+    if (dy < -127) dy = -127;
 
     // Build Byte 1 Flags
     uint8_t b1 = 0x08; // Bit 3 is always 1
-    if (buttons & 1)
-        b1 |= 0x01; // Left Button
-    if (buttons & 2)
-        b1 |= 0x02; // Right Button
-    if (buttons & 4)
-        b1 |= 0x04; // Middle Button
-    if (dx < 0)
-        b1 |= 0x10; // X Sign Bit
-    if (dy < 0)
-        b1 |= 0x20; // Y Sign Bit
+    if (buttons & 1) b1 |= 0x01; // Left Button
+    if (buttons & 2) b1 |= 0x02; // Right Button
+    if (buttons & 4) b1 |= 0x04; // Middle Button
+    if (dx < 0) b1 |= 0x10; // X Sign Bit
+    if (dy < 0) b1 |= 0x20; // Y Sign Bit
 
     // Byte 2 & 3: Raw low 8 bits of deltas
     uint8_t b2 = (uint8_t) (dx & 0xFF);
@@ -330,7 +334,7 @@ static void MX_TIM2_Init(void) {
     htim2.Instance = TIM2;
     htim2.Init.Prescaler = 1;
     htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim2.Init.Period = 60;	// 1000khz
+    htim2.Init.Period = 58;	// 1000khz
     htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_Base_Init(&htim2) != HAL_OK) {
