@@ -29,12 +29,13 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
 | Signal | STM32 Pin | Description |
 | :--- | :--- | :--- |
-| **PS/2 CLK** | `PA8` *(example)* | Clock line (Driven by STM32) |
-| **PS/2 DATA**| `PA9` *(example)* | Serial Data line |
+| **PS/2 CLK** | `PB0` *(example)* | Clock line (Driven by STM32) |
+| **PS/2 DATA**| `PB1` *(example)* | Serial Data line |
 | **USB D-** | `PA11` | USB Host Data Minus |
 | **USB D+** | `PA12` | USB Host Data Plus |
 | **VCC** | `5V` | 5V Power Supply |
 | **GND** | `GND` | Common Ground |
+| **LED STATUS** | `C11` *blue LED*
 
 > **Note:** Ensure 4.7kΩ pull-up resistors are connected to 5V on both `PS/2 CLK` and `PS/2 DATA` lines if your host system or target board does not provide them internally. *Adjust STM32 pins in table above if your configuration uses different GPIOs.*
 
