@@ -45,7 +45,7 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
 ## Flashing Firmware via DFU (USB Bootloader)
 
-Ready-to-flash binary releases are available in the [Releases Tab](../../releases). You can flash the pre-compiled `.bin` or `.dfu` file over USB without requiring an ST-Link programmer.
+Ready-to-flash binary releases are available in the [Releases Tab](../../release). You can flash the pre-compiled `.bin` or `.dfu` file over USB without requiring an ST-Link programmer.
 
 ### Prerequisites
 - Download and install **[STM32CubeProgrammer](https://www.st.com/en/development-tools/stm32cubeprog.html)** or `dfu-util`.
