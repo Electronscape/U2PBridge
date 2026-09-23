@@ -80,6 +80,7 @@ If you're on Linux, you can flash directly using `dfu-util` without needing a GU
 
 ```bash
 sudo dfu-util -a 0 -d 0483:df11 -s 0x08000000:leave -D USB2PS2Bridge1.bin
+```
 
 
 ## License
