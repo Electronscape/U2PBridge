@@ -13,6 +13,18 @@
 #define PS2_DATA_PORT GPIOB
 #define PS2_DATA_PIN  GPIO_PIN_1
 
+#define SYSTEM_CLOCK_HZ        84000000U
+#define PS2_BIT_CLOCK_HZ       200000U
+#define PS2_HALF_BIT_CYCLES    (SYSTEM_CLOCK_HZ / (PS2_BIT_CLOCK_HZ * 2U))
+#define PS2_INTER_BYTE_GAP_US  20U
+#define PS2_INTER_BYTE_CYCLES  ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
+#define TIM2_CLOCK_HZ          SYSTEM_CLOCK_HZ
+#define REPORT_TIMER_HZ        1000U
+#define REPORT_TIMER_PSC       1U
+#define REPORT_TIMER_PERIOD \
+    ((TIM2_CLOCK_HZ / ((REPORT_TIMER_PSC + 1U) * REPORT_TIMER_HZ)) - 1U)
+#define BUTTON_HOLD_REFRESH_TICKS 20U
+
 /* ============================================================================
  * Peripheral Handles & External Declarations
  * ============================================================================ */
@@ -21,7 +33,7 @@ UART_HandleTypeDef huart2;
 
 extern USBH_HandleTypeDef hUsbHostFS;
 extern UART_HandleTypeDef huart2;
-extern TIM_HandleTypeDef htim2; // Assuming TIM2 configured for 8ms (125 Hz)
+extern TIM_HandleTypeDef htim2;
 
 /* ============================================================================
  * Global & Static State Variables
@@ -39,9 +51,8 @@ volatile uint8_t ledon = 0;
 static uint8_t prev_btn_left = 0;
 static uint8_t prev_btn_rght = 0;
 static uint8_t prev_btn_mid = 0;
-static int16_t last_dx = 0;
-static int16_t last_dy = 0;
 static uint8_t last_btns = 0;
+static uint8_t button_hold_refresh_ticks = 0;
 
 /* ============================================================================
  * Function Prototypes
@@ -56,7 +67,7 @@ static inline void PS2_CLK_Low(void);
 static inline void PS2_CLK_High(void);
 static inline void PS2_DATA_Low(void);
 static inline void PS2_DATA_High(void);
-static void PS2_Delay_us(uint32_t us);
+static void PS2_Timing_Init(void);
 void PS2_Write_Byte(uint8_t data);
 void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 
@@ -67,6 +78,7 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 int main(void) {
     HAL_Init();
     SystemClock_Config();
+    PS2_Timing_Init();
     MX_GPIO_Init();
     MX_USART2_UART_Init();
     MX_USB_HOST_Init();
@@ -113,30 +125,31 @@ static inline void PS2_DATA_High(void) {
     PS2_DATA_PORT->BSRR = PS2_DATA_PIN;
 }
 
-static void PS2_Delay_us(uint32_t us) {
-    uint32_t count = us * 10; // Simple microsecond delay loop
-    while (count--) {
-        __NOP();
+static void PS2_Timing_Init(void) {
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+static inline void PS2_Delay_Cycles(uint32_t cycles) {
+    uint32_t start = DWT->CYCCNT;
+
+    while ((uint32_t)(DWT->CYCCNT - start) < cycles) {
     }
 }
-// 84 MHz CPU clock: ~42 NOPs gives ~500 ns delay for 1 MHz clocking
-#define DELAY_500NS() do { \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); \
-} while(0)// 84 MHz CPU clock: ~42 NOPs gives ~500 ns delay for 1 MHz clocking
 
-#define DELAY_400NS() do { \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); __NOP(); \
-    __NOP(); __NOP(); \
-} while(0)
+static inline void PS2_Delay_Half_Bit(void) {
+    PS2_Delay_Cycles(PS2_HALF_BIT_CYCLES);
+}
 
-// Transmit a single byte using high-speed 1 MHz PS/2 frame timing
+static inline void PS2_Clock_Bit(void) {
+    PS2_Delay_Half_Bit();
+    PS2_CLK_Low();
+    PS2_Delay_Half_Bit();
+    PS2_CLK_High();
+}
+
+// Transmit a single byte using the configured PS/2 frame timing.
 void PS2_Write_Byte(uint8_t data) {
     uint8_t parity = 1;
 
@@ -146,11 +159,7 @@ void PS2_Write_Byte(uint8_t data) {
 
     // 1. Start Bit (Low)
     PS2_DATA_Low();
-    DELAY_500NS();
-    PS2_CLK_Low();
-    DELAY_500NS();
-    PS2_CLK_High();
-    DELAY_500NS();
+    PS2_Clock_Bit();
 
     // 2. 8 Data Bits (LSB First) - Branchless DATA drive
     for (int i = 0; i < 8; i++) {
@@ -159,30 +168,16 @@ void PS2_Write_Byte(uint8_t data) {
 
         // Constant-time bit write using BSRR register math (No IF statements)
         PS2_DATA_PORT->BSRR = (uint32_t)PS2_DATA_PIN << ((!bit) * 16);
-
-        DELAY_400NS();
-        PS2_CLK_Low();
-        DELAY_500NS();
-        PS2_CLK_High();
-        DELAY_400NS();
+        PS2_Clock_Bit();
     }
 
     // 3. Parity Bit (Odd) - Branchless
     PS2_DATA_PORT->BSRR = (uint32_t)PS2_DATA_PIN << ((!parity) * 16);
-
-    DELAY_500NS();
-    PS2_CLK_Low();
-    DELAY_500NS();
-    PS2_CLK_High();
-    DELAY_500NS();
+    PS2_Clock_Bit();
 
     // 4. Stop Bit (High)
     PS2_DATA_High();
-    DELAY_500NS();
-    PS2_CLK_Low();
-    DELAY_500NS();
-    PS2_CLK_High();
-    DELAY_500NS();
+    PS2_Clock_Bit();
 
     // Restore interrupt state
     __set_PRIMASK(primask);
@@ -213,7 +208,9 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
 
     // Send the 3-byte packet sequence
     PS2_Write_Byte(b1);
+    PS2_Delay_Cycles(PS2_INTER_BYTE_CYCLES);
     PS2_Write_Byte(b2);
+    PS2_Delay_Cycles(PS2_INTER_BYTE_CYCLES);
     PS2_Write_Byte(b3);
 }
 
@@ -246,18 +243,40 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         int16_t dx = pending_dx;
         int16_t dy = pending_dy;
         uint8_t btns = current_btns;
+        uint8_t send_packet = 0;
 
         pending_dx = 0;
         pending_dy = 0;
 
-        // Send PS/2 packet whenever there is motion, when motion stops, or buttons change
-        if (dx != 0 || dy != 0 || last_dx != 0 || last_dy != 0
-                || btns != last_btns) {
-            // 1. Send native PS/2 packet out PB0/PB1
+        if (dx != 0 || dy != 0 || btns != last_btns) {
+            send_packet = 1;
+        }
+
+        /*
+        if (btns != last_btns) {
+            send_packet = 1;
+            button_hold_refresh_ticks = 0;
+        } else if (send_packet) {
+            button_hold_refresh_ticks = 0;
+        } else if (btns != 0U) {
+            button_hold_refresh_ticks++;
+            if (button_hold_refresh_ticks >= BUTTON_HOLD_REFRESH_TICKS) {
+                send_packet = 1;
+                dx = 0;
+                dy = 0;
+                button_hold_refresh_ticks = 0;
+            }
+        } else {
+            button_hold_refresh_ticks = 0;
+        }
+        */
+
+        // Send one packet per action; held buttons get a quiet state refresh.
+        if (send_packet) {
             PS2_Send_Packet(dx, dy, btns);
 			ledon = 100;
 
-            // 2. Accumulate deltas into bounded screen-space coordinates
+            // Accumulate deltas into bounded screen-space coordinates
             screen_x += dx;
             screen_y += dy;
 
@@ -273,21 +292,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
             if (screen_y > 319)
                 screen_y = 319;
 
-#if(0)
-            // 3. Heartbeat report over UART2
-            uint8_t btn_left = (btns & 1) ? 1 : 0;
-            uint8_t btn_rght = (btns & 2) ? 1 : 0;
-            uint8_t btn_mid = (btns & 4) ? 1 : 0;
 
-            char msg[64];
-            int len = snprintf(msg, sizeof(msg),
-                    "Pos:[%3d, %3d] | dX:%3d dY:%3d | L:%d R:%d M:%d\r\n",
-                    screen_x, screen_y, dx, dy, btn_left, btn_rght, btn_mid);
-
-            HAL_UART_Transmit(&huart2, (uint8_t*) msg, len, 2);
-#endif
-            last_dx = dx;
-            last_dy = dy;
             last_btns = btns;
         }
     }
@@ -332,9 +337,9 @@ static void MX_TIM2_Init(void) {
     TIM_MasterConfigTypeDef sMasterConfig = { 0 };
 
     htim2.Instance = TIM2;
-    htim2.Init.Prescaler = 1;
+    htim2.Init.Prescaler = REPORT_TIMER_PSC;
     htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim2.Init.Period = 58;	// 1000khz
+    htim2.Init.Period = REPORT_TIMER_PERIOD;
     htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_Base_Init(&htim2) != HAL_OK) {
