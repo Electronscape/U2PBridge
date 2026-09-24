@@ -25,6 +25,9 @@
     ((TIM2_CLOCK_HZ / ((REPORT_TIMER_PSC + 1U) * REPORT_TIMER_HZ)) - 1U)
 #define BUTTON_HOLD_REFRESH_TICKS 20U
 
+
+#define HEARTBEAT_REFRESH_TICKS (REPORT_TIMER_HZ / 2U)
+
 /* ============================================================================
  * Peripheral Handles & External Declarations
  * ============================================================================ */
@@ -38,9 +41,6 @@ extern TIM_HandleTypeDef htim2;
 /* ============================================================================
  * Global & Static State Variables
  * ============================================================================ */
-// Absolute screen position tracking (480x320)
-static int16_t screen_x = 240; // Center screen default X
-static int16_t screen_y = 160; // Center screen default Y
 
 // Shared atomic buffers updated by USB interrupt
 volatile int16_t pending_dx = 0;
@@ -53,6 +53,7 @@ static uint8_t prev_btn_rght = 0;
 static uint8_t prev_btn_mid = 0;
 static uint8_t last_btns = 0;
 static uint8_t button_hold_refresh_ticks = 0;
+static uint16_t heartbeat_refresh_ticks = 0;
 
 /* ============================================================================
  * Function Prototypes
@@ -250,48 +251,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
         if (dx != 0 || dy != 0 || btns != last_btns) {
             send_packet = 1;
-        }
-
-        /*
-        if (btns != last_btns) {
-            send_packet = 1;
-            button_hold_refresh_ticks = 0;
-        } else if (send_packet) {
-            button_hold_refresh_ticks = 0;
-        } else if (btns != 0U) {
-            button_hold_refresh_ticks++;
-            if (button_hold_refresh_ticks >= BUTTON_HOLD_REFRESH_TICKS) {
-                send_packet = 1;
-                dx = 0;
-                dy = 0;
-                button_hold_refresh_ticks = 0;
-            }
+            heartbeat_refresh_ticks = 0;
         } else {
-            button_hold_refresh_ticks = 0;
+            heartbeat_refresh_ticks++;
+            if (heartbeat_refresh_ticks >= HEARTBEAT_REFRESH_TICKS) {
+                send_packet = 1;
+                heartbeat_refresh_ticks = 0;
+            }
         }
-        */
 
-        // Send one packet per action; held buttons get a quiet state refresh.
+
+        // Send packets from one place so heartbeat bytes cannot interleave movement bytes.
         if (send_packet) {
             PS2_Send_Packet(dx, dy, btns);
 			ledon = 100;
-
-            // Accumulate deltas into bounded screen-space coordinates
-            screen_x += dx;
-            screen_y += dy;
-
-            // Clamp X to [0 .. 479]
-            if (screen_x < 0)
-                screen_x = 0;
-            if (screen_x > 479)
-                screen_x = 479;
-
-            // Clamp Y to [0 .. 319]
-            if (screen_y < 0)
-                screen_y = 0;
-            if (screen_y > 319)
-                screen_y = 319;
-
 
             last_btns = btns;
         }
