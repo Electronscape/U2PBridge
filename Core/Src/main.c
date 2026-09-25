@@ -2,7 +2,6 @@
 #include "usb_host.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
-#include <string.h>
 #include <stdint.h>
 
 /* ============================================================================
@@ -13,11 +12,28 @@
 #define PS2_DATA_PORT GPIOB
 #define PS2_DATA_PIN  GPIO_PIN_1
 
+#define AMIGA_PORT       GPIOA
+#define AMIGA_V_PIN      GPIO_PIN_0  // DE-9 pin 1 / joystick up
+#define AMIGA_H_PIN      GPIO_PIN_1  // DE-9 pin 2 / joystick down
+#define AMIGA_VQ_PIN     GPIO_PIN_2  // DE-9 pin 3 / joystick left
+#define AMIGA_HQ_PIN     GPIO_PIN_3  // DE-9 pin 4 / joystick right
+#define AMIGA_BTN1_PIN   GPIO_PIN_4  // DE-9 pin 6 / left button
+#define AMIGA_BTN2_PIN   GPIO_PIN_5  // DE-9 pin 9 / right button
+#define AMIGA_BTN3_PIN   GPIO_PIN_6  // Optional DE-9 pin 5 / middle button
+#define AMIGA_OUTPUT_PINS \
+    (AMIGA_V_PIN | AMIGA_H_PIN | AMIGA_VQ_PIN | AMIGA_HQ_PIN \
+            | AMIGA_BTN1_PIN | AMIGA_BTN2_PIN | AMIGA_BTN3_PIN)
+
 #define SYSTEM_CLOCK_HZ        84000000U
 #define PS2_BIT_CLOCK_HZ       200000U
 #define PS2_HALF_BIT_CYCLES    (SYSTEM_CLOCK_HZ / (PS2_BIT_CLOCK_HZ * 2U))
 #define PS2_INTER_BYTE_GAP_US  20U
 #define PS2_INTER_BYTE_CYCLES  ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
+#define AMIGA_QUAD_STEP_DELAY_US 20U
+#define AMIGA_QUAD_STEP_DELAY_CYCLES \
+    ((SYSTEM_CLOCK_HZ / 1000000U) * AMIGA_QUAD_STEP_DELAY_US)
+#define AMIGA_X_DIRECTION (1)
+#define AMIGA_Y_DIRECTION (1)
 #define TIM2_CLOCK_HZ          SYSTEM_CLOCK_HZ
 #define REPORT_TIMER_HZ        1000U
 #define REPORT_TIMER_PSC       1U
@@ -26,16 +42,14 @@
 #define BUTTON_HOLD_REFRESH_TICKS 20U
 
 
-#define HEARTBEAT_REFRESH_TICKS (REPORT_TIMER_HZ / 2U)
+#define HEARTBEAT_REFRESH_TICKS (REPORT_TIMER_HZ/4)
 
 /* ============================================================================
  * Peripheral Handles & External Declarations
  * ============================================================================ */
 TIM_HandleTypeDef htim2;
-UART_HandleTypeDef huart2;
 
 extern USBH_HandleTypeDef hUsbHostFS;
-extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim2;
 
 /* ============================================================================
@@ -54,13 +68,14 @@ static uint8_t prev_btn_mid = 0;
 static uint8_t last_btns = 0;
 static uint8_t button_hold_refresh_ticks = 0;
 static uint16_t heartbeat_refresh_ticks = 0;
+static uint8_t amiga_x_phase = 0;
+static uint8_t amiga_y_phase = 0;
 
 /* ============================================================================
  * Function Prototypes
  * ============================================================================ */
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 void MX_USB_HOST_Process(void);
 
@@ -71,6 +86,8 @@ static inline void PS2_DATA_High(void);
 static void PS2_Timing_Init(void);
 void PS2_Write_Byte(uint8_t data);
 void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
+static void AMIGA_Init_Output_State(void);
+static void AMIGA_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 
 /* ============================================================================
  * Main Entry Point
@@ -81,14 +98,11 @@ int main(void) {
     SystemClock_Config();
     PS2_Timing_Init();
     MX_GPIO_Init();
-    MX_USART2_UART_Init();
+    AMIGA_Init_Output_State();
     MX_USB_HOST_Init();
     MX_TIM2_Init();
 
     HAL_TIM_Base_Start_IT(&htim2);
-
-    char msg[] = "USART2: I'm alive!\r\n";
-    HAL_UART_Transmit(&huart2, (uint8_t*) msg, strlen(msg), 100);
 
     while (1) {
         MX_USB_HOST_Process();
@@ -216,6 +230,95 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
 }
 
 /* ============================================================================
+ * Amiga Mouse Quadrature Output
+ * ============================================================================ */
+static void AMIGA_Write_Pin(uint16_t pin, uint8_t high) {
+    AMIGA_PORT->BSRR = high ? pin : ((uint32_t) pin << 16);
+}
+
+static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin,
+        uint8_t phase) {
+    // Idle high keeps the DE-9 direction lines released when there is no motion.
+    static const uint8_t state[4][2] = {
+            { 1, 1 },
+            { 0, 1 },
+            { 0, 0 },
+            { 1, 0 },
+    };
+    uint32_t set_pins = 0;
+    uint32_t reset_pins = 0;
+
+    if (state[phase][0]) {
+        set_pins |= phase_a_pin;
+    } else {
+        reset_pins |= phase_a_pin;
+    }
+
+    if (state[phase][1]) {
+        set_pins |= phase_b_pin;
+    } else {
+        reset_pins |= phase_b_pin;
+    }
+
+    AMIGA_PORT->BSRR = set_pins | (reset_pins << 16);
+}
+
+static void AMIGA_Delay_Step(void) {
+    PS2_Delay_Cycles(AMIGA_QUAD_STEP_DELAY_CYCLES);
+}
+
+static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction,
+        uint16_t phase_a_pin, uint16_t phase_b_pin) {
+    if (direction > 0) {
+        *phase = (*phase + 1U) & 0x03U;
+    } else {
+        *phase = (*phase + 3U) & 0x03U;
+    }
+
+    AMIGA_Write_Quadrature(phase_a_pin, phase_b_pin, *phase);
+    AMIGA_Delay_Step();
+}
+
+static void AMIGA_Set_Buttons(uint8_t buttons) {
+    // Amiga mouse buttons are active-low.
+    AMIGA_Write_Pin(AMIGA_BTN1_PIN, (buttons & 0x01U) == 0U);
+    AMIGA_Write_Pin(AMIGA_BTN2_PIN, (buttons & 0x02U) == 0U);
+    AMIGA_Write_Pin(AMIGA_BTN3_PIN, (buttons & 0x04U) == 0U);
+}
+
+static void AMIGA_Init_Output_State(void) {
+    AMIGA_Write_Quadrature(AMIGA_H_PIN, AMIGA_HQ_PIN, amiga_x_phase);
+    AMIGA_Write_Quadrature(AMIGA_V_PIN, AMIGA_VQ_PIN, amiga_y_phase);
+    AMIGA_Set_Buttons(0U);
+}
+
+static void AMIGA_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
+    AMIGA_Set_Buttons(buttons);
+
+    while (dx != 0 || dy != 0) {
+        if (dx > 0) {
+            AMIGA_Step_Axis(&amiga_x_phase, AMIGA_X_DIRECTION, AMIGA_H_PIN,
+                    AMIGA_HQ_PIN);
+            dx--;
+        } else if (dx < 0) {
+            AMIGA_Step_Axis(&amiga_x_phase, -(AMIGA_X_DIRECTION), AMIGA_H_PIN,
+                    AMIGA_HQ_PIN);
+            dx++;
+        }
+
+        if (dy > 0) {
+            AMIGA_Step_Axis(&amiga_y_phase, AMIGA_Y_DIRECTION, AMIGA_V_PIN,
+                    AMIGA_VQ_PIN);
+            dy--;
+        } else if (dy < 0) {
+            AMIGA_Step_Axis(&amiga_y_phase, -(AMIGA_Y_DIRECTION), AMIGA_V_PIN,
+                    AMIGA_VQ_PIN);
+            dy++;
+        }
+    }
+}
+
+/* ============================================================================
  * Interrupt & Host Event Callbacks
  * ============================================================================ */
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
@@ -223,14 +326,20 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
         HID_MOUSE_Info_TypeDef *mouse_info = USBH_HID_GetMouseInfo(phost);
 
         if (mouse_info != NULL) {
-            // Accumulate relative deltas from raw HID packets
-            pending_dx += (int8_t) mouse_info->x;
-            pending_dy += (int8_t) mouse_info->y;
-
-            // Pack buttons (Bit 0 = Left, Bit 1 = Right, Bit 2 = Middle)
-            current_btns = (mouse_info->buttons[0] ? 1 : 0)
+            int8_t dx = (int8_t) mouse_info->x;
+            int8_t dy = (int8_t) mouse_info->y;
+            uint8_t buttons = (mouse_info->buttons[0] ? 1 : 0)
                     | (mouse_info->buttons[1] ? 2 : 0)
                     | (mouse_info->buttons[2] ? 4 : 0);
+
+            AMIGA_Send_Packet(dx, dy, buttons);
+
+            // Accumulate relative deltas from raw HID packets
+            pending_dx += dx;
+            pending_dy += dy;
+
+            // Pack buttons (Bit 0 = Left, Bit 1 = Right, Bit 2 = Middle)
+            current_btns = buttons;
 
             // Clear the internal HAL buffer
             mouse_info->x = 0;
@@ -251,7 +360,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
         if (dx != 0 || dy != 0 || btns != last_btns) {
             send_packet = 1;
-            heartbeat_refresh_ticks = 0;
+            heartbeat_refresh_ticks = (HEARTBEAT_REFRESH_TICKS/2);
         } else {
             heartbeat_refresh_ticks++;
             if (heartbeat_refresh_ticks >= HEARTBEAT_REFRESH_TICKS) {
@@ -330,20 +439,6 @@ static void MX_TIM2_Init(void) {
     }
 }
 
-static void MX_USART2_UART_Init(void) {
-    huart2.Instance = USART2;
-    huart2.Init.BaudRate = 115200;
-    huart2.Init.WordLength = UART_WORDLENGTH_8B;
-    huart2.Init.StopBits = UART_STOPBITS_1;
-    huart2.Init.Parity = UART_PARITY_NONE;
-    huart2.Init.Mode = UART_MODE_TX_RX;
-    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-    if (HAL_UART_Init(&huart2) != HAL_OK) {
-        Error_Handler();
-    }
-}
-
 static void MX_GPIO_Init(void) {
     GPIO_InitTypeDef GPIO_InitStruct = { 0 };
     __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -358,6 +453,14 @@ static void MX_GPIO_Init(void) {
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    HAL_GPIO_WritePin(AMIGA_PORT, AMIGA_OUTPUT_PINS, GPIO_PIN_SET);
+
+    GPIO_InitStruct.Pin = AMIGA_OUTPUT_PINS;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(AMIGA_PORT, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Open-Drain is required for PS/2!

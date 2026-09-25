@@ -31,6 +31,13 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 | :--- | :--- | :--- |
 | **PS/2 CLK** | `PB0` *(example)* | Clock line (Driven by STM32) |
 | **PS/2 DATA**| `PB1` *(example)* | Serial Data line |
+| **Amiga V / Up** | `PA0` | DE-9 pin 1 vertical phase A |
+| **Amiga H / Down** | `PA1` | DE-9 pin 2 horizontal phase A |
+| **Amiga VQ / Left** | `PA2` | DE-9 pin 3 vertical phase B |
+| **Amiga HQ / Right** | `PA3` | DE-9 pin 4 horizontal phase B |
+| **Amiga Button 1** | `PA4` | DE-9 pin 6 left button, active-low |
+| **Amiga Button 2** | `PA5` | DE-9 pin 9 right button, active-low |
+| **Amiga Button 3** | `PA6` | Optional DE-9 pin 5 middle button, active-low |
 | **USB D-** | `PA11` | USB Host Data Minus |
 | **USB D+** | `PA12` | USB Host Data Plus |
 | **VCC** | `5V` | 5V Power Supply |
