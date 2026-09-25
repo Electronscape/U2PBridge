@@ -29,20 +29,21 @@
 #define PS2_HALF_BIT_CYCLES    (SYSTEM_CLOCK_HZ / (PS2_BIT_CLOCK_HZ * 2U))
 #define PS2_INTER_BYTE_GAP_US  20U
 #define PS2_INTER_BYTE_CYCLES  ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
-#define AMIGA_QUAD_STEP_DELAY_US 20U
-#define AMIGA_QUAD_STEP_DELAY_CYCLES \
-    ((SYSTEM_CLOCK_HZ / 1000000U) * AMIGA_QUAD_STEP_DELAY_US)
 #define AMIGA_X_DIRECTION (1)
 #define AMIGA_Y_DIRECTION (1)
 #define TIM2_CLOCK_HZ          SYSTEM_CLOCK_HZ
-#define REPORT_TIMER_HZ        1000U
+#define REPORT_TIMER_HZ        10000U
 #define REPORT_TIMER_PSC       1U
 #define REPORT_TIMER_PERIOD \
     ((TIM2_CLOCK_HZ / ((REPORT_TIMER_PSC + 1U) * REPORT_TIMER_HZ)) - 1U)
+#define PS2_REPORT_HZ          1000U
+#define PS2_REPORT_TICKS       (REPORT_TIMER_HZ / PS2_REPORT_HZ)
+#define AMIGA_DEFAULT_REPORT_TICKS (REPORT_TIMER_HZ / 100U)
+#define AMIGA_MAX_REPORT_TICKS     (REPORT_TIMER_HZ / 20U)
 #define BUTTON_HOLD_REFRESH_TICKS 20U
 
 
-#define HEARTBEAT_REFRESH_TICKS (REPORT_TIMER_HZ/4)
+#define HEARTBEAT_REFRESH_TICKS (PS2_REPORT_HZ/4)
 
 /* ============================================================================
  * Peripheral Handles & External Declarations
@@ -68,6 +69,13 @@ static uint8_t prev_btn_mid = 0;
 static uint8_t last_btns = 0;
 static uint8_t button_hold_refresh_ticks = 0;
 static uint16_t heartbeat_refresh_ticks = 0;
+static volatile int16_t amiga_pending_dx = 0;
+static volatile int16_t amiga_pending_dy = 0;
+static volatile uint8_t amiga_current_buttons = 0;
+static volatile uint16_t amiga_ticks_since_report = AMIGA_DEFAULT_REPORT_TICKS;
+static uint16_t amiga_report_ticks = AMIGA_DEFAULT_REPORT_TICKS;
+static uint16_t amiga_x_error = 0;
+static uint16_t amiga_y_error = 0;
 static uint8_t amiga_x_phase = 0;
 static uint8_t amiga_y_phase = 0;
 
@@ -87,7 +95,8 @@ static void PS2_Timing_Init(void);
 void PS2_Write_Byte(uint8_t data);
 void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 static void AMIGA_Init_Output_State(void);
-static void AMIGA_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
+static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons);
+static void AMIGA_Service_Output(void);
 
 /* ============================================================================
  * Main Entry Point
@@ -263,10 +272,6 @@ static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin,
     AMIGA_PORT->BSRR = set_pins | (reset_pins << 16);
 }
 
-static void AMIGA_Delay_Step(void) {
-    PS2_Delay_Cycles(AMIGA_QUAD_STEP_DELAY_CYCLES);
-}
-
 static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction,
         uint16_t phase_a_pin, uint16_t phase_b_pin) {
     if (direction > 0) {
@@ -276,7 +281,6 @@ static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction,
     }
 
     AMIGA_Write_Quadrature(phase_a_pin, phase_b_pin, *phase);
-    AMIGA_Delay_Step();
 }
 
 static void AMIGA_Set_Buttons(uint8_t buttons) {
@@ -292,30 +296,78 @@ static void AMIGA_Init_Output_State(void) {
     AMIGA_Set_Buttons(0U);
 }
 
-static void AMIGA_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons) {
+static int16_t AMIGA_Clamp_Pending(int32_t value) {
+    if (value > 127) {
+        return 127;
+    }
+    if (value < -127) {
+        return -127;
+    }
+    return (int16_t) value;
+}
+
+static uint16_t AMIGA_Abs16(int16_t value) {
+    return (uint16_t) ((value < 0) ? -value : value);
+}
+
+static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons) {
+    uint16_t report_ticks = amiga_ticks_since_report;
+
+    if (report_ticks == 0U || report_ticks > AMIGA_MAX_REPORT_TICKS) {
+        report_ticks = AMIGA_DEFAULT_REPORT_TICKS;
+    }
+
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    amiga_pending_dx = AMIGA_Clamp_Pending((int32_t) amiga_pending_dx + dx);
+    amiga_pending_dy = AMIGA_Clamp_Pending((int32_t) amiga_pending_dy + dy);
+    amiga_current_buttons = buttons;
+    amiga_report_ticks = report_ticks;
+    amiga_ticks_since_report = 0U;
+
+    __set_PRIMASK(primask);
+
     AMIGA_Set_Buttons(buttons);
+}
 
-    while (dx != 0 || dy != 0) {
-        if (dx > 0) {
-            AMIGA_Step_Axis(&amiga_x_phase, AMIGA_X_DIRECTION, AMIGA_H_PIN,
-                    AMIGA_HQ_PIN);
-            dx--;
-        } else if (dx < 0) {
-            AMIGA_Step_Axis(&amiga_x_phase, -(AMIGA_X_DIRECTION), AMIGA_H_PIN,
-                    AMIGA_HQ_PIN);
-            dx++;
-        }
+static void AMIGA_Service_Axis(volatile int16_t *pending, uint16_t *error,
+        uint8_t *phase, int8_t positive_direction, uint16_t phase_a_pin,
+        uint16_t phase_b_pin) {
+    int16_t delta = *pending;
 
-        if (dy > 0) {
-            AMIGA_Step_Axis(&amiga_y_phase, AMIGA_Y_DIRECTION, AMIGA_V_PIN,
-                    AMIGA_VQ_PIN);
-            dy--;
-        } else if (dy < 0) {
-            AMIGA_Step_Axis(&amiga_y_phase, -(AMIGA_Y_DIRECTION), AMIGA_V_PIN,
-                    AMIGA_VQ_PIN);
-            dy++;
+    if (delta == 0) {
+        *error = 0U;
+        return;
+    }
+
+    *error += AMIGA_Abs16(delta);
+
+    if (*error >= amiga_report_ticks) {
+        *error -= amiga_report_ticks;
+
+        if (delta > 0) {
+            AMIGA_Step_Axis(phase, positive_direction, phase_a_pin,
+                    phase_b_pin);
+            (*pending)--;
+        } else {
+            AMIGA_Step_Axis(phase, -positive_direction, phase_a_pin,
+                    phase_b_pin);
+            (*pending)++;
         }
     }
+}
+
+static void AMIGA_Service_Output(void) {
+    if (amiga_ticks_since_report < AMIGA_MAX_REPORT_TICKS) {
+        amiga_ticks_since_report++;
+    }
+
+    AMIGA_Set_Buttons(amiga_current_buttons);
+    AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase,
+            AMIGA_X_DIRECTION, AMIGA_H_PIN, AMIGA_HQ_PIN);
+    AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase,
+            AMIGA_Y_DIRECTION, AMIGA_V_PIN, AMIGA_VQ_PIN);
 }
 
 /* ============================================================================
@@ -332,7 +384,7 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
                     | (mouse_info->buttons[1] ? 2 : 0)
                     | (mouse_info->buttons[2] ? 4 : 0);
 
-            AMIGA_Send_Packet(dx, dy, buttons);
+            AMIGA_Queue_Report(dx, dy, buttons);
 
             // Accumulate relative deltas from raw HID packets
             pending_dx += dx;
@@ -350,6 +402,16 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM2) {
+        static uint8_t ps2_report_tick = 0;
+
+        AMIGA_Service_Output();
+
+        ps2_report_tick++;
+        if (ps2_report_tick < PS2_REPORT_TICKS) {
+            return;
+        }
+        ps2_report_tick = 0;
+
         int16_t dx = pending_dx;
         int16_t dy = pending_dy;
         uint8_t btns = current_btns;
@@ -459,7 +521,7 @@ static void MX_GPIO_Init(void) {
     GPIO_InitStruct.Pin = AMIGA_OUTPUT_PINS;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
     HAL_GPIO_Init(AMIGA_PORT, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1;
