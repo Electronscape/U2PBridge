@@ -31,17 +31,17 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 | :--- | :--- | :--- |
 | **PS/2 CLK** | `PB0` *(example)* | Clock line (Driven by STM32) |
 | **PS/2 DATA**| `PB1` *(example)* | Serial Data line |
-| **Amiga V / Up** | `PA0` | DE-9 pin 1 vertical phase A |
-| **Amiga H / Down** | `PA1` | DE-9 pin 2 horizontal phase A |
-| **Amiga VQ / Left** | `PA2` | DE-9 pin 3 vertical phase B |
-| **Amiga HQ / Right** | `PA3` | DE-9 pin 4 horizontal phase B |
-| **Amiga Button 1** | `PA4` | DE-9 pin 6 left button, active-low |
-| **Amiga Button 2** | `PA5` | DE-9 pin 9 right button, active-low |
-| **Amiga Button 3** | `PA6` | Optional DE-9 pin 5 middle button, active-low |
+| **Amiga V / Up** | `PA0` | DSUB-9 pin 1 vertical phase A |
+| **Amiga H / Down** | `PA1` | DSUB-9 pin 2 horizontal phase A |
+| **Amiga VQ / Left** | `PA2` | DSUB-9 pin 3 vertical phase B |
+| **Amiga HQ / Right** | `PA3` | DSUB-9 pin 4 horizontal phase B |
+| **Amiga Button 1** | `PA4` | DSUB-9 pin 6 left button, active-low |
+| **Amiga Button 2** | `PA5` | DSUB-9 pin 9 right button, active-low |
+| **Amiga Button 3** | `PA6` | DSUB-9 pin 5 : middle button, active-low |
+| **VCC** | `5V` | DSUB-7 : 5V Power Supply 125 mA max |
+| **GND** | `GND` | DSUB-8 : Common Ground |
 | **USB D-** | `PA11` | USB Host Data Minus |
 | **USB D+** | `PA12` | USB Host Data Plus |
-| **VCC** | `5V` | 5V Power Supply |
-| **GND** | `GND` | Common Ground |
 | **LED STATUS** | `C11` *blue LED* | flashes when moved or button clicked
 
 > **Note:** This doesn't support wheel mouse (inteli-mouse, yet)
@@ -51,7 +51,20 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
 ## Pinout Configuration
 
+9 PIN D-SUB MALE at the computer.
+
+<img width="293" height="129" alt="conn_dsub9m" src="https://github.com/user-attachments/assets/6e25f474-10bf-41e7-801c-f721269f300c" />
+
+9 PIN D-SUB FEMALE at the mouse/joy cable.
+
+<img width="293" height="129" alt="conn_dsub9f" src="https://github.com/user-attachments/assets/f403c304-c587-4bcd-a93f-bded65bb5bf6" />
+
 <img width="1561" height="1178" alt="pinouts" src="https://github.com/user-attachments/assets/d8f707be-e465-4876-aa5b-666317ecbefc" />
+
+
+
+
+![Uploading conn_dsub9m.svg…]()
 
 
 Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
