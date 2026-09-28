@@ -51,7 +51,10 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 
 ## Pinout Configuration
 
+9 PIN D-SUB MALE at the computer.
 <img width="293" height="129" alt="conn_dsub9m" src="https://github.com/user-attachments/assets/6e25f474-10bf-41e7-801c-f721269f300c" />
+
+9 PIN D-SUB FEMALE at the mouse/joy cable.
 <img width="293" height="129" alt="conn_dsub9f" src="https://github.com/user-attachments/assets/f403c304-c587-4bcd-a93f-bded65bb5bf6" />
 
 <img width="1561" height="1178" alt="pinouts" src="https://github.com/user-attachments/assets/d8f707be-e465-4876-aa5b-666317ecbefc" />
