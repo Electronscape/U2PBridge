@@ -12,32 +12,29 @@
 #define PS2_DATA_PORT GPIOB
 #define PS2_DATA_PIN  GPIO_PIN_1
 
-#define AMIGA_PORT       GPIOA
-#define AMIGA_V_PIN      GPIO_PIN_0  // DE-9 pin 1 / joystick up
-#define AMIGA_H_PIN      GPIO_PIN_1  // DE-9 pin 2 / joystick down
-#define AMIGA_VQ_PIN     GPIO_PIN_2  // DE-9 pin 3 / joystick left
-#define AMIGA_HQ_PIN     GPIO_PIN_3  // DE-9 pin 4 / joystick right
-#define AMIGA_BTN1_PIN   GPIO_PIN_4  // DE-9 pin 6 / left button
-#define AMIGA_BTN2_PIN   GPIO_PIN_5  // DE-9 pin 9 / right button
-#define AMIGA_BTN3_PIN   GPIO_PIN_6  // Optional DE-9 pin 5 / middle button
-#define AMIGA_OUTPUT_PINS \
-    (AMIGA_V_PIN | AMIGA_H_PIN | AMIGA_VQ_PIN | AMIGA_HQ_PIN \
-            | AMIGA_BTN1_PIN | AMIGA_BTN2_PIN | AMIGA_BTN3_PIN)
+#define AMIGA_PORT          GPIOA
+#define AMIGA_V_PIN         GPIO_PIN_0  // DE-9 pin 1 / joystick up
+#define AMIGA_H_PIN         GPIO_PIN_1  // DE-9 pin 2 / joystick down
+#define AMIGA_VQ_PIN        GPIO_PIN_2  // DE-9 pin 3 / joystick left
+#define AMIGA_HQ_PIN        GPIO_PIN_3  // DE-9 pin 4 / joystick right
+#define AMIGA_BTN1_PIN      GPIO_PIN_4  // DE-9 pin 6 / left button
+#define AMIGA_BTN2_PIN      GPIO_PIN_5  // DE-9 pin 9 / right button
+#define AMIGA_BTN3_PIN      GPIO_PIN_6  // Optional DE-9 pin 5 / middle button
+#define AMIGA_OUTPUT_PINS  (AMIGA_V_PIN | AMIGA_H_PIN | AMIGA_VQ_PIN | AMIGA_HQ_PIN | AMIGA_BTN1_PIN | AMIGA_BTN2_PIN | AMIGA_BTN3_PIN)
 
-#define SYSTEM_CLOCK_HZ        84000000U
-#define PS2_BIT_CLOCK_HZ       200000U
-#define PS2_HALF_BIT_CYCLES    (SYSTEM_CLOCK_HZ / (PS2_BIT_CLOCK_HZ * 2U))
-#define PS2_INTER_BYTE_GAP_US  20U
-#define PS2_INTER_BYTE_CYCLES  ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
-#define AMIGA_X_DIRECTION (1)
-#define AMIGA_Y_DIRECTION (1)
-#define TIM2_CLOCK_HZ          SYSTEM_CLOCK_HZ
-#define REPORT_TIMER_HZ        10000U
-#define REPORT_TIMER_PSC       1U
-#define REPORT_TIMER_PERIOD \
-    ((TIM2_CLOCK_HZ / ((REPORT_TIMER_PSC + 1U) * REPORT_TIMER_HZ)) - 1U)
-#define PS2_REPORT_HZ          1000U
-#define PS2_REPORT_TICKS       (REPORT_TIMER_HZ / PS2_REPORT_HZ)
+#define SYSTEM_CLOCK_HZ         84000000U
+#define PS2_BIT_CLOCK_HZ        200000U
+#define PS2_HALF_BIT_CYCLES     (SYSTEM_CLOCK_HZ / (PS2_BIT_CLOCK_HZ * 2U))
+#define PS2_INTER_BYTE_GAP_US   20U
+#define PS2_INTER_BYTE_CYCLES   ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
+#define AMIGA_X_DIRECTION       (1)
+#define AMIGA_Y_DIRECTION       (1)
+#define TIM2_CLOCK_HZ           SYSTEM_CLOCK_HZ
+#define REPORT_TIMER_HZ         10000U
+#define REPORT_TIMER_PSC        1U
+#define REPORT_TIMER_PERIOD     ((TIM2_CLOCK_HZ / ((REPORT_TIMER_PSC + 1U) * REPORT_TIMER_HZ)) - 1U)
+#define PS2_REPORT_HZ           1000U
+#define PS2_REPORT_TICKS        (REPORT_TIMER_HZ / PS2_REPORT_HZ)
 #define AMIGA_DEFAULT_REPORT_TICKS (REPORT_TIMER_HZ / 100U)
 #define AMIGA_MAX_REPORT_TICKS     (REPORT_TIMER_HZ / 20U)
 #define AMIGA_SIDBOX_IRQ_STROBE   1U
@@ -284,10 +281,10 @@ static void AMIGA_Strobe_Sidbox_IRQ(void) {
 static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin, uint8_t phase) {
     // Idle high keeps the DE-9 direction lines released when there is no motion.
     static const uint8_t state[4][2] = {
-            { 1, 1 },
-            { 0, 1 },
-            { 0, 0 },
-            { 1, 0 },
+        { 1, 1 },
+        { 0, 1 },
+        { 0, 0 },
+        { 1, 0 },
     };
     uint32_t set_pins = 0;
     uint32_t reset_pins = 0;
