@@ -47,6 +47,17 @@ Connect your target system's PS/2 port to the STM32 GPIO pins as follows:
 > **Note:** This doesn't support wheel mouse (inteli-mouse, yet)
 
 > **Note:** Ensure 4.7kΩ pull-up resistors are connected to 5V on both `PS/2 CLK` and `PS/2 DATA` lines if your host system or target board does not provide them internally. *Adjust STM32 pins in table above if your configuration uses different GPIOs.*
+
+---
+
+## Mouse Output Modes
+
+U2PBridge defaults to **Amiga quadrature mouse** output on the DE-9 connector.
+
+To enable **Atari ST mouse** output, hold the USB mouse **right button** while powering up or resetting the adapter. Keep it held until the USB mouse has been detected. The selected mode is latched until the next reset or power cycle.
+
+The right-button selector click is suppressed by the firmware, so it should not be sent to the target machine during startup.
+
 ---
 
 ## Pinout Configuration
