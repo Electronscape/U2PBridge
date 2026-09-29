@@ -29,6 +29,8 @@
 #define PS2_INTER_BYTE_CYCLES   ((SYSTEM_CLOCK_HZ / 1000000U) * PS2_INTER_BYTE_GAP_US)
 #define AMIGA_X_DIRECTION       (1)
 #define AMIGA_Y_DIRECTION       (1)
+#define ATARI_ST_X_DIRECTION    (1)
+#define ATARI_ST_Y_DIRECTION    (1)
 #define TIM2_CLOCK_HZ           SYSTEM_CLOCK_HZ
 #define REPORT_TIMER_HZ         10000U
 #define REPORT_TIMER_PSC        1U
@@ -37,12 +39,21 @@
 #define PS2_REPORT_TICKS        (REPORT_TIMER_HZ / PS2_REPORT_HZ)
 #define AMIGA_DEFAULT_REPORT_TICKS (REPORT_TIMER_HZ / 100U)
 #define AMIGA_MAX_REPORT_TICKS     (REPORT_TIMER_HZ / 20U)
-#define AMIGA_QUADRATURE_SLEW_NS  50U
+#define AMIGA_QUADRATURE_SLEW_NS  500U
 #define AMIGA_QUADRATURE_SLEW_CYCLES (((SYSTEM_CLOCK_HZ / 1000000U) * AMIGA_QUADRATURE_SLEW_NS + 999U) / 1000U)
+#define WAKESIDBOX              1U
+#define SIDBOX_WAKE_SETUP_US    2U
+#define SIDBOX_WAKE_LOW_US      4U
+#define US_TO_CYCLES(us)        ((SYSTEM_CLOCK_HZ / 1000000U) * (us))
 #define BUTTON_HOLD_REFRESH_TICKS 20U
 
 
 #define HEARTBEAT_REFRESH_TICKS (PS2_REPORT_HZ/4)
+
+typedef enum {
+    MOUSE_OUTPUT_AMIGA = 0,
+    MOUSE_OUTPUT_ATARI_ST = 1,
+} MouseOutputMode;
 
 /* ============================================================================
  * Peripheral Handles & External Declarations
@@ -77,6 +88,9 @@ static uint16_t amiga_x_error = 0;
 static uint16_t amiga_y_error = 0;
 static uint8_t amiga_x_phase = 0;
 static uint8_t amiga_y_phase = 0;
+static volatile MouseOutputMode mouse_output_mode = MOUSE_OUTPUT_AMIGA;
+static volatile uint8_t mouse_output_mode_latched = 0;
+static volatile uint8_t suppress_selector_right_button = 0;
 
 /* ============================================================================
  * Function Prototypes
@@ -96,6 +110,8 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 static void AMIGA_Init_Output_State(void);
 static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons);
 static void AMIGA_Service_Output(void);
+static void MOUSE_Latch_Output_Mode(uint8_t buttons);
+static uint8_t MOUSE_Filter_Output_Buttons(uint8_t buttons);
 static void PS2_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons);
 
 /* ============================================================================
@@ -267,6 +283,35 @@ static void AMIGA_Write_Quadrature_Pin(uint16_t pin, uint8_t high) {
     AMIGA_Slew_After_Quadrature_Edge();
 }
 
+static void AMIGA_Wake_Sidbox(void) {
+#if WAKESIDBOX
+    uint16_t wake_pin = 0U;
+
+    if ((amiga_current_buttons & 0x02U) == 0U) {
+        wake_pin = AMIGA_BTN2_PIN;
+    } else if ((amiga_current_buttons & 0x01U) == 0U) {
+        wake_pin = AMIGA_BTN1_PIN;
+    }
+
+    if (wake_pin == 0U) {
+        return;
+    }
+
+    PS2_Delay_Cycles(US_TO_CYCLES(SIDBOX_WAKE_SETUP_US));
+    AMIGA_Write_Pin(wake_pin, 0U);
+    PS2_Delay_Cycles(US_TO_CYCLES(SIDBOX_WAKE_LOW_US));
+    AMIGA_Write_Pin(wake_pin, 1U);
+#endif
+}
+
+static uint8_t AMIGA_Is_Y_Phase_B_Pin(uint16_t phase_b_pin) {
+    if (mouse_output_mode == MOUSE_OUTPUT_ATARI_ST) {
+        return phase_b_pin == AMIGA_HQ_PIN;
+    }
+
+    return phase_b_pin == AMIGA_VQ_PIN;
+}
+
 static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin, uint8_t old_phase, uint8_t phase) {
     // Idle high keeps the DE-9 direction lines released when there is no motion.
     static const uint8_t state[4][2] = {
@@ -297,7 +342,13 @@ static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction, uint16_t phase_a_p
         *phase = (*phase + 3U) & 0x03U;
     }
 
+    uint8_t phase_b_changed = AMIGA_Phase_Pin_High(old_phase, 1U) != AMIGA_Phase_Pin_High(*phase, 1U);
+
     AMIGA_Write_Quadrature(phase_a_pin, phase_b_pin, old_phase, *phase);
+
+    if (phase_b_changed && AMIGA_Is_Y_Phase_B_Pin(phase_b_pin)) {
+        AMIGA_Wake_Sidbox();
+    }
 }
 
 static void AMIGA_Set_Buttons(uint8_t buttons) {
@@ -308,10 +359,18 @@ static void AMIGA_Set_Buttons(uint8_t buttons) {
 }
 
 static void AMIGA_Init_Output_State(void) {
-    AMIGA_Write_Pin(AMIGA_H_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 0U));
-    AMIGA_Write_Pin(AMIGA_HQ_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 1U));
-    AMIGA_Write_Pin(AMIGA_V_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 0U));
-    AMIGA_Write_Pin(AMIGA_VQ_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 1U));
+    if (mouse_output_mode == MOUSE_OUTPUT_ATARI_ST) {
+        AMIGA_Write_Pin(AMIGA_H_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 0U));   // DE-9 pin 2 / ST XA
+        AMIGA_Write_Pin(AMIGA_V_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 1U));   // DE-9 pin 1 / ST XB
+        AMIGA_Write_Pin(AMIGA_VQ_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 0U));  // DE-9 pin 3 / ST YA
+        AMIGA_Write_Pin(AMIGA_HQ_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 1U));  // DE-9 pin 4 / ST YB
+    } else {
+        AMIGA_Write_Pin(AMIGA_H_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 0U));   // DE-9 pin 2 / Amiga H
+        AMIGA_Write_Pin(AMIGA_HQ_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 1U));  // DE-9 pin 4 / Amiga HQ
+        AMIGA_Write_Pin(AMIGA_V_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 0U));   // DE-9 pin 1 / Amiga V
+        AMIGA_Write_Pin(AMIGA_VQ_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 1U));  // DE-9 pin 3 / Amiga VQ
+    }
+
     AMIGA_Set_Buttons(0U);
 }
 
@@ -407,8 +466,54 @@ static void AMIGA_Service_Output(void) {
     }
 
     AMIGA_Set_Buttons(amiga_current_buttons);
-    AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase, AMIGA_X_DIRECTION, AMIGA_H_PIN, AMIGA_HQ_PIN);
-    AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, AMIGA_Y_DIRECTION, AMIGA_V_PIN, AMIGA_VQ_PIN);
+
+    if (mouse_output_mode == MOUSE_OUTPUT_ATARI_ST) {
+        AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase, ATARI_ST_X_DIRECTION, AMIGA_H_PIN, AMIGA_V_PIN);
+        AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, ATARI_ST_Y_DIRECTION, AMIGA_VQ_PIN, AMIGA_HQ_PIN);
+    } else {
+        AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase, AMIGA_X_DIRECTION, AMIGA_H_PIN, AMIGA_HQ_PIN);
+        AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, AMIGA_Y_DIRECTION, AMIGA_V_PIN, AMIGA_VQ_PIN);
+    }
+}
+
+static void MOUSE_Latch_Output_Mode(uint8_t buttons) {
+    if (mouse_output_mode_latched) {
+        return;
+    }
+
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (mouse_output_mode_latched) {
+        __set_PRIMASK(primask);
+        return;
+    }
+
+    mouse_output_mode = (buttons & 0x02U) ? MOUSE_OUTPUT_ATARI_ST : MOUSE_OUTPUT_AMIGA;
+    suppress_selector_right_button = (mouse_output_mode == MOUSE_OUTPUT_ATARI_ST);
+    mouse_output_mode_latched = 1U;
+
+    amiga_x_phase = 0U;
+    amiga_y_phase = 0U;
+    amiga_x_error = 0U;
+    amiga_y_error = 0U;
+    amiga_pending_dx = 0;
+    amiga_pending_dy = 0;
+    AMIGA_Init_Output_State();
+
+    __set_PRIMASK(primask);
+}
+
+static uint8_t MOUSE_Filter_Output_Buttons(uint8_t buttons) {
+    if (suppress_selector_right_button) {
+        if (buttons & 0x02U) {
+            buttons &= (uint8_t) ~0x02U;
+        } else {
+            suppress_selector_right_button = 0U;
+        }
+    }
+
+    return buttons;
 }
 
 /* ============================================================================
@@ -425,6 +530,8 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
                     | (mouse_info->buttons[1] ? 2 : 0)
                     | (mouse_info->buttons[2] ? 4 : 0);
 
+            MOUSE_Latch_Output_Mode(buttons);
+            buttons = MOUSE_Filter_Output_Buttons(buttons);
             AMIGA_Queue_Report(dx, dy, buttons);
             PS2_Queue_Report(dx, dy, buttons);
 
