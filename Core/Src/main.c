@@ -98,6 +98,7 @@ void PS2_Send_Packet(int16_t dx, int16_t dy, uint8_t buttons);
 static void AMIGA_Init_Output_State(void);
 static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons);
 static void AMIGA_Service_Output(void);
+static void PS2_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons);
 
 /* ============================================================================
  * Main Entry Point
@@ -360,6 +361,14 @@ static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons) {
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
+    if (dx != 0 && dy == 0) {
+        amiga_pending_dy = 0;
+        amiga_y_error = 0U;
+    } else if (dy != 0 && dx == 0) {
+        amiga_pending_dx = 0;
+        amiga_x_error = 0U;
+    }
+
     amiga_pending_dx = AMIGA_Clamp_Pending((int32_t) amiga_pending_dx + dx);
     amiga_pending_dy = AMIGA_Clamp_Pending((int32_t) amiga_pending_dy + dy);
     amiga_current_buttons = buttons;
@@ -369,6 +378,26 @@ static void AMIGA_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons) {
     __set_PRIMASK(primask);
 
     AMIGA_Set_Buttons(buttons);
+}
+
+static void PS2_Queue_Report(int16_t dx, int16_t dy, uint8_t buttons) {
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (dx != 0 && dy == 0) {
+        pending_dy = 0;
+    } else if (dy != 0 && dx == 0) {
+        pending_dx = 0;
+    }
+
+    // Accumulate relative deltas from raw HID packets.
+    pending_dx += dx;
+    pending_dy += dy;
+
+    // Pack buttons (Bit 0 = Left, Bit 1 = Right, Bit 2 = Middle).
+    current_btns = buttons;
+
+    __set_PRIMASK(primask);
 }
 
 static void AMIGA_Service_Axis(volatile int16_t *pending, uint16_t *error, uint8_t *phase, int8_t positive_direction, uint16_t phase_a_pin, uint16_t phase_b_pin) {
@@ -419,13 +448,7 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost) {
                     | (mouse_info->buttons[2] ? 4 : 0);
 
             AMIGA_Queue_Report(dx, dy, buttons);
-
-            // Accumulate relative deltas from raw HID packets
-            pending_dx += dx;
-            pending_dy += dy;
-
-            // Pack buttons (Bit 0 = Left, Bit 1 = Right, Bit 2 = Middle)
-            current_btns = buttons;
+            PS2_Queue_Report(dx, dy, buttons);
 
             // Clear the internal HAL buffer
             mouse_info->x = 0;
