@@ -37,10 +37,8 @@
 #define PS2_REPORT_TICKS        (REPORT_TIMER_HZ / PS2_REPORT_HZ)
 #define AMIGA_DEFAULT_REPORT_TICKS (REPORT_TIMER_HZ / 100U)
 #define AMIGA_MAX_REPORT_TICKS     (REPORT_TIMER_HZ / 20U)
-#define AMIGA_SIDBOX_IRQ_STROBE   1U
-#define AMIGA_STROBE_SETUP_US     2U
-#define AMIGA_STROBE_LOW_US       4U
-#define AMIGA_US_TO_CYCLES(us)    ((SYSTEM_CLOCK_HZ / 1000000U) * (us))
+#define AMIGA_QUADRATURE_SLEW_NS  50U
+#define AMIGA_QUADRATURE_SLEW_CYCLES (((SYSTEM_CLOCK_HZ / 1000000U) * AMIGA_QUADRATURE_SLEW_NS + 999U) / 1000U)
 #define BUTTON_HOLD_REFRESH_TICKS 20U
 
 
@@ -258,28 +256,18 @@ static uint8_t AMIGA_Phase_Pin_High(uint8_t phase, uint8_t phase_b) {
     return state[phase & 0x03U][phase_b ? 1U : 0U];
 }
 
-static void AMIGA_Strobe_Sidbox_IRQ(void) {
-#if AMIGA_SIDBOX_IRQ_STROBE
-    uint16_t strobe_pin = 0U;
-
-    if ((amiga_current_buttons & 0x01U) == 0U) {
-        strobe_pin = AMIGA_BTN1_PIN;
-    } else if ((amiga_current_buttons & 0x02U) == 0U) {
-        strobe_pin = AMIGA_BTN2_PIN;
-    }
-
-    if (strobe_pin == 0U) {
-        return;
-    }
-
-    PS2_Delay_Cycles(AMIGA_US_TO_CYCLES(AMIGA_STROBE_SETUP_US));
-    AMIGA_Write_Pin(strobe_pin, 0U);
-    PS2_Delay_Cycles(AMIGA_US_TO_CYCLES(AMIGA_STROBE_LOW_US));
-    AMIGA_Write_Pin(strobe_pin, 1U);
+static void AMIGA_Slew_After_Quadrature_Edge(void) {
+#if AMIGA_QUADRATURE_SLEW_CYCLES > 0U
+    PS2_Delay_Cycles(AMIGA_QUADRATURE_SLEW_CYCLES);
 #endif
 }
 
-static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin, uint8_t phase) {
+static void AMIGA_Write_Quadrature_Pin(uint16_t pin, uint8_t high) {
+    AMIGA_Write_Pin(pin, high);
+    AMIGA_Slew_After_Quadrature_Edge();
+}
+
+static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin, uint8_t old_phase, uint8_t phase) {
     // Idle high keeps the DE-9 direction lines released when there is no motion.
     static const uint8_t state[4][2] = {
         { 1, 1 },
@@ -287,26 +275,20 @@ static void AMIGA_Write_Quadrature(uint16_t phase_a_pin, uint16_t phase_b_pin, u
         { 0, 0 },
         { 1, 0 },
     };
-    uint32_t set_pins = 0;
-    uint32_t reset_pins = 0;
 
-    if (state[phase][0]) {
-        set_pins |= phase_a_pin;
-    } else {
-        reset_pins |= phase_a_pin;
+    old_phase &= 0x03U;
+    phase &= 0x03U;
+
+    if (state[old_phase][0] != state[phase][0]) {
+        AMIGA_Write_Quadrature_Pin(phase_a_pin, state[phase][0]);
     }
 
-    if (state[phase][1]) {
-        set_pins |= phase_b_pin;
-    } else {
-        reset_pins |= phase_b_pin;
+    if (state[old_phase][1] != state[phase][1]) {
+        AMIGA_Write_Quadrature_Pin(phase_b_pin, state[phase][1]);
     }
-
-    AMIGA_PORT->BSRR = set_pins | (reset_pins << 16);
 }
 
-static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction,
-        uint16_t phase_a_pin, uint16_t phase_b_pin) {
+static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction, uint16_t phase_a_pin, uint16_t phase_b_pin) {
     uint8_t old_phase = *phase;
 
     if (direction > 0) {
@@ -315,13 +297,7 @@ static void AMIGA_Step_Axis(uint8_t *phase, int8_t direction,
         *phase = (*phase + 3U) & 0x03U;
     }
 
-    uint8_t phase_b_changed = AMIGA_Phase_Pin_High(old_phase, 1U) != AMIGA_Phase_Pin_High(*phase, 1U);
-
-    AMIGA_Write_Quadrature(phase_a_pin, phase_b_pin, *phase);
-
-    if ((phase_b_pin == AMIGA_VQ_PIN) && phase_b_changed) {
-        AMIGA_Strobe_Sidbox_IRQ();
-    }
+    AMIGA_Write_Quadrature(phase_a_pin, phase_b_pin, old_phase, *phase);
 }
 
 static void AMIGA_Set_Buttons(uint8_t buttons) {
@@ -332,8 +308,10 @@ static void AMIGA_Set_Buttons(uint8_t buttons) {
 }
 
 static void AMIGA_Init_Output_State(void) {
-    AMIGA_Write_Quadrature(AMIGA_H_PIN, AMIGA_HQ_PIN, amiga_x_phase);
-    AMIGA_Write_Quadrature(AMIGA_V_PIN, AMIGA_VQ_PIN, amiga_y_phase);
+    AMIGA_Write_Pin(AMIGA_H_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 0U));
+    AMIGA_Write_Pin(AMIGA_HQ_PIN, AMIGA_Phase_Pin_High(amiga_x_phase, 1U));
+    AMIGA_Write_Pin(AMIGA_V_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 0U));
+    AMIGA_Write_Pin(AMIGA_VQ_PIN, AMIGA_Phase_Pin_High(amiga_y_phase, 1U));
     AMIGA_Set_Buttons(0U);
 }
 
