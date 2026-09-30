@@ -861,9 +861,9 @@ Disassembly of section .text:
  8000a02:	4928      	ldr	r1, [pc, #160]	; (8000aa4 <HAL_TIM_PeriodElapsedCallback+0xd8>)
  8000a04:	4828      	ldr	r0, [pc, #160]	; (8000aa8 <HAL_TIM_PeriodElapsedCallback+0xdc>)
  8000a06:	f7ff fe55 	bl	80006b4 <AMIGA_Service_Axis.constprop.0>
- 8000a0a:	2308      	movs	r3, #8
+ 8000a0a:	2304      	movs	r3, #4
  8000a0c:	9300      	str	r3, [sp, #0]
- 8000a0e:	2304      	movs	r3, #4
+ 8000a0e:	2308      	movs	r3, #8
  8000a10:	4a26      	ldr	r2, [pc, #152]	; (8000aac <HAL_TIM_PeriodElapsedCallback+0xe0>)
  8000a12:	4927      	ldr	r1, [pc, #156]	; (8000ab0 <HAL_TIM_PeriodElapsedCallback+0xe4>)
  8000a14:	4827      	ldr	r0, [pc, #156]	; (8000ab4 <HAL_TIM_PeriodElapsedCallback+0xe8>)

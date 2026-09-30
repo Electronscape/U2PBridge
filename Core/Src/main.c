@@ -469,7 +469,7 @@ static void AMIGA_Service_Output(void) {
 
     if (mouse_output_mode == MOUSE_OUTPUT_ATARI_ST) {
         AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase, ATARI_ST_X_DIRECTION, AMIGA_H_PIN, AMIGA_V_PIN);
-        AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, ATARI_ST_Y_DIRECTION, AMIGA_VQ_PIN, AMIGA_HQ_PIN);
+        AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, ATARI_ST_Y_DIRECTION, AMIGA_HQ_PIN, AMIGA_VQ_PIN);
     } else {
         AMIGA_Service_Axis(&amiga_pending_dx, &amiga_x_error, &amiga_x_phase, AMIGA_X_DIRECTION, AMIGA_H_PIN, AMIGA_HQ_PIN);
         AMIGA_Service_Axis(&amiga_pending_dy, &amiga_y_error, &amiga_y_phase, AMIGA_Y_DIRECTION, AMIGA_V_PIN, AMIGA_VQ_PIN);
