@@ -1,0 +1,4 @@
+lsblk
+
+sudo umount /dev/sdb<x>
+sudo dosfsck -n /dev/sdb<x>

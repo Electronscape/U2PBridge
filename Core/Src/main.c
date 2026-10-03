@@ -298,9 +298,9 @@ static void AMIGA_Wake_Sidbox(void) {
     }
 
     PS2_Delay_Cycles(US_TO_CYCLES(SIDBOX_WAKE_SETUP_US));
-    AMIGA_Write_Pin(wake_pin, 0U);
+    //AMIGA_Write_Pin(wake_pin, 0U);
     PS2_Delay_Cycles(US_TO_CYCLES(SIDBOX_WAKE_LOW_US));
-    AMIGA_Write_Pin(wake_pin, 1U);
+    //AMIGA_Write_Pin(wake_pin, 1U);
 #endif
 }
 
